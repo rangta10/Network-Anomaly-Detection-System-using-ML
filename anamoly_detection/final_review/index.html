@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AnomalyIQ — Isolation Forest Detection</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #07080d;
+    --surface: #0e1018;
+    --surface2: #151822;
+    --border: #1e2235;
+    --accent: #00e5ff;
+    --accent2: #ff3d6b;
+    --accent3: #7c5cfc;
+    --text: #e8eaf2;
+    --muted: #555b78;
+    --normal: #00e5a0;
+    --anomaly: #ff3d6b;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--display);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Animated grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+  /* Header */
+  header {
+    padding: 32px 0 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo-icon {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--accent3), var(--accent));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+  .logo h1 {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  .logo h1 span { color: var(--accent); }
+  .status-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .status-badge .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .status-badge.ready { border-color: var(--normal); color: var(--normal); }
+  .status-badge.ready .dot { background: var(--normal); box-shadow: 0 0 6px var(--normal); animation: pulse 2s infinite; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+  /* Main layout */
+  main { padding: 40px 0 80px; }
+
+  .steps-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 40px;
+  }
+  @media(max-width:720px){ .steps-grid{ grid-template-columns:1fr; } }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: #2a2f4a; }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent3), var(--accent));
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .card:hover::before, .card.active::before { opacity: 1; }
+
+  .step-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent3);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .card h2 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    letter-spacing: -0.3px;
+  }
+  .card p.desc {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 20px;
+    font-weight: 400;
+  }
+
+  /* Upload zones */
+  .upload-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--surface2);
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(0,229,255,0.04);
+  }
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .upload-zone .icon { font-size: 28px; margin-bottom: 8px; }
+  .upload-zone .label { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .upload-zone .sub { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .upload-zone.has-file { border-color: var(--normal); background: rgba(0,229,160,0.04); }
+  .upload-zone.has-file .label { color: var(--normal); }
+
+  /* Contamination slider */
+  .param-row {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .param-row label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .param-row input[type=range] {
+    flex: 1;
+    accent-color: var(--accent3);
+    height: 4px;
+  }
+  .param-val {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    min-width: 36px;
+    text-align: right;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 22px;
+    border-radius: 10px;
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 14px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.2px;
+    margin-top: 16px;
+    width: 100%;
+    justify-content: center;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent3), var(--accent));
+    color: #07080d;
+  }
+  .btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--accent2); color: var(--accent2); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+  .btn .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: none;
+  }
+  .btn.loading .spinner { display: block; }
+  .btn.loading .btn-text { opacity: 0.7; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Alert / Toast */
+  .alert {
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    margin-top: 14px;
+    display: none;
+    line-height: 1.5;
+    font-weight: 500;
+  }
+  .alert.show { display: block; }
+  .alert.error { background: rgba(255,61,107,0.12); border: 1px solid rgba(255,61,107,0.3); color: var(--anomaly); }
+  .alert.success { background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.3); color: var(--normal); }
+
+  /* Stats bar */
+  #stats-section { display: none; }
+  #stats-section.show { display: block; }
+
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  @media(max-width:640px){ .stats-bar{ grid-template-columns:1fr 1fr; } }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card .s-label {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 8px;
+  }
+  .stat-card .s-val {
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: -1px;
+  }
+  .stat-card .s-sub { font-size: 11px; color: var(--muted); margin-top: 2px; font-family: var(--mono); }
+  .stat-card.anomaly-stat .s-val { color: var(--anomaly); }
+  .stat-card.normal-stat .s-val { color: var(--normal); }
+  .stat-card.total-stat .s-val { color: var(--accent); }
+  .stat-card.rate-stat .s-val { color: var(--accent3); }
+
+  /* Donut chart */
+  .results-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 20px;
+    margin-bottom: 28px;
+  }
+  @media(max-width:720px){ .results-layout{ grid-template-columns:1fr; } }
+
+  .donut-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .donut-card svg { overflow: visible; }
+  .donut-legend { margin-top: 16px; width: 100%; }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    margin-bottom: 6px;
+  }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+  /* Table */
+  .table-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .table-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .table-title { font-size: 14px; font-weight: 700; }
+  .filter-tabs { display: flex; gap: 6px; }
+  .tab {
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: all 0.15s;
+    background: transparent;
+    color: var(--muted);
+  }
+  .tab:hover { border-color: var(--accent); color: var(--accent); }
+  .tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .tab.anomaly-tab.active { background: var(--anomaly); border-color: var(--anomaly); }
+  .tab.normal-tab.active { background: var(--normal); border-color: var(--normal); }
+
+  .table-wrap { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--mono); }
+  thead th {
+    position: sticky; top: 0;
+    background: var(--surface2);
+    padding: 10px 14px;
+    text-align: left;
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(30,34,53,0.6);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--surface2); }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  .badge.anomaly { background: rgba(255,61,107,0.15); color: var(--anomaly); }
+  .badge.normal { background: rgba(0,229,160,0.12); color: var(--normal); }
+
+  .score-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .score-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    min-width: 60px;
+  }
+  .score-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.4s;
+  }
+
+  /* Download button */
+  #download-btn { display: none; }
+
+  /* Section label */
+  .section-label {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <h1>Anomaly<span>IQ</span></h1>
+    </div>
+    <div class="status-badge" id="model-status">
+      <div class="dot"></div>
+      Model not trained
+    </div>
+  </header>
+
+  <main>
+    <div class="steps-grid">
+      <!-- STEP 1: Train -->
+      <div class="card" id="train-card">
+        <div class="step-num">Step 01</div>
+        <h2>Train Model</h2>
+        <p class="desc">Upload your training CSV with a <code style="font-family:var(--mono);color:var(--accent);font-size:12px">class</code> column. The Isolation Forest will learn the normal pattern.</p>
+        <div class="upload-zone" id="train-zone">
+          <input type="file" accept=".csv" id="train-file" />
+          <div class="icon">📂</div>
+          <div class="label">Drop Train_data.csv here</div>
+          <div class="sub">CSV • requires 'class' column</div>
+        </div>
+        <div class="param-row">
+          <label>Contamination</label>
+          <input type="range" id="contamination" min="0.01" max="0.5" step="0.01" value="0.1" />
+          <span class="param-val" id="cont-val">0.10</span>
+        </div>
+        <button class="btn btn-primary" id="train-btn" disabled>
+          <div class="spinner"></div>
+          <span class="btn-text">Train Model</span>
+        </button>
+        <div class="alert" id="train-alert"></div>
+      </div>
+
+      <!-- STEP 2: Predict -->
+      <div class="card" id="predict-card">
+        <div class="step-num">Step 02</div>
+        <h2>Run Detection</h2>
+        <p class="desc">Upload your test CSV. The trained model will score each row and flag anomalies in real-time.</p>
+        <div class="upload-zone" id="test-zone">
+          <input type="file" accept=".csv" id="test-file" />
+          <div class="icon">🔍</div>
+          <div class="label">Drop Test_data.csv here</div>
+          <div class="sub">CSV • 'class' column optional</div>
+        </div>
+        <button class="btn btn-secondary" id="predict-btn" disabled>
+          <div class="spinner"></div>
+          <span class="btn-text">Detect Anomalies</span>
+        </button>
+        <button class="btn btn-secondary" id="download-btn" style="margin-top:8px">
+          ⬇ Download Results CSV
+        </button>
+        <div class="alert" id="predict-alert"></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="stats-section">
+      <div class="section-label">Detection Results</div>
+      <div class="stats-bar">
+        <div class="stat-card total-stat">
+          <div class="s-label">Total Rows</div>
+          <div class="s-val" id="st-total">—</div>
+          <div class="s-sub">analyzed</div>
+        </div>
+        <div class="stat-card anomaly-stat">
+          <div class="s-label">Anomalies</div>
+          <div class="s-val" id="st-anomaly">—</div>
+          <div class="s-sub">flagged</div>
+        </div>
+        <div class="stat-card normal-stat">
+          <div class="s-label">Normal</div>
+          <div class="s-val" id="st-normal">—</div>
+          <div class="s-sub">clean</div>
+        </div>
+        <div class="stat-card rate-stat">
+          <div class="s-label">Anomaly Rate</div>
+          <div class="s-val" id="st-rate">—</div>
+          <div class="s-sub">percent</div>
+        </div>
+      </div>
+
+      <div class="results-layout">
+        <div class="donut-card">
+          <svg id="donut-svg" width="160" height="160" viewBox="0 0 160 160"></svg>
+          <div class="donut-legend">
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--anomaly)"></div>
+              <span style="color:var(--muted)">Anomalies</span>
+              <span id="leg-anom" style="margin-left:auto;color:var(--anomaly);font-family:var(--mono);font-size:11px">—</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--normal)"></div>
+              <span style="color:var(--muted)">Normal</span>
+              <span id="leg-norm" style="margin-left:auto;color:var(--normal);font-family:var(--mono);font-size:11px">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="table-header">
+            <span class="table-title">Prediction Results</span>
+            <div class="filter-tabs">
+              <button class="tab active" onclick="filterTable('all')">All</button>
+              <button class="tab anomaly-tab" onclick="filterTable('anomaly')">Anomaly</button>
+              <button class="tab normal-tab" onclick="filterTable('normal')">Normal</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="results-table">
+              <thead id="results-thead"></thead>
+              <tbody id="results-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const API = 'http://localhost:5000/api';
+let allRows = [], allCols = [], currentFilter = 'all';
+let lastResult = null;
+
+// Check model status on load
+async function checkStatus() {
+  try {
+    const r = await fetch(`${API}/status`);
+    const d = await r.json();
+    if (d.trained) setModelReady(d.stats);
+  } catch(e) {}
+}
+checkStatus();
+
+// Contamination slider
+document.getElementById('contamination').addEventListener('input', function() {
+  document.getElementById('cont-val').textContent = parseFloat(this.value).toFixed(2);
+});
+
+// File upload handlers
+function setupUpload(zoneId, inputId, onFile) {
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  input.addEventListener('change', () => {
+    if (input.files[0]) onFile(input.files[0], zone);
+  });
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f && f.name.endsWith('.csv')) { input.files = e.dataTransfer.files; onFile(f, zone); }
+  });
+}
+
+setupUpload('train-zone', 'train-file', (file, zone) => {
+  zone.classList.add('has-file');
+  zone.querySelector('.label').textContent = `✓ ${file.name}`;
+  zone.querySelector('.sub').textContent = `${(file.size/1024).toFixed(1)} KB`;
+  document.getElementById('train-btn').disabled = false;
+});
+
+setupUpload('test-zone', 'test-file', (file, zone) => {
+  zone.classList.add('has-file');
+  zone.querySelector('.label').textContent = `✓ ${file.name}`;
+  zone.querySelector('.sub').textContent = `${(file.size/1024).toFixed(1)} KB`;
+  const modelReady = document.getElementById('model-status').classList.contains('ready');
+  if (modelReady) document.getElementById('predict-btn').disabled = false;
+});
+
+// Train
+document.getElementById('train-btn').addEventListener('click', async () => {
+  const file = document.getElementById('train-file').files[0];
+  const contamination = document.getElementById('contamination').value;
+  if (!file) return;
+
+  const btn = document.getElementById('train-btn');
+  setLoading(btn, true);
+  showAlert('train-alert', '', '');
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('contamination', contamination);
+
+  try {
+    const r = await fetch(`${API}/train`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.success) {
+      setModelReady(d.stats);
+      showAlert('train-alert', `✓ Trained on ${d.stats.rows} rows · ${d.stats.features} features`, 'success');
+      if (document.getElementById('test-file').files[0])
+        document.getElementById('predict-btn').disabled = false;
+    } else {
+      showAlert('train-alert', d.error, 'error');
+    }
+  } catch(e) {
+    showAlert('train-alert', 'Could not connect to API. Is the server running?', 'error');
+  }
+  setLoading(btn, false);
+});
+
+// Predict
+document.getElementById('predict-btn').addEventListener('click', async () => {
+  const file = document.getElementById('test-file').files[0];
+  if (!file) return;
+
+  const btn = document.getElementById('predict-btn');
+  setLoading(btn, true);
+  showAlert('predict-alert', '', '');
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  try {
+    const r = await fetch(`${API}/predict`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.success) {
+      lastResult = d;
+      renderResults(d);
+      showAlert('predict-alert', `✓ Analyzed ${d.total} rows · ${d.anomalies} anomalies detected`, 'success');
+      document.getElementById('download-btn').style.display = 'flex';
+    } else {
+      showAlert('predict-alert', d.error, 'error');
+    }
+  } catch(e) {
+    showAlert('predict-alert', 'Could not connect to API. Is the server running?', 'error');
+  }
+  setLoading(btn, false);
+});
+
+// Download
+document.getElementById('download-btn').addEventListener('click', () => {
+  if (!lastResult) return;
+  const rows = lastResult.rows;
+  const cols = lastResult.columns;
+  let csv = cols.join(',') + '\n';
+  rows.forEach(row => {
+    csv += cols.map(c => JSON.stringify(row[c] ?? '')).join(',') + '\n';
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'anomaly_predictions.csv';
+  a.click();
+});
+
+function setModelReady(stats) {
+  const badge = document.getElementById('model-status');
+  badge.className = 'status-badge ready';
+  badge.innerHTML = `<div class="dot"></div> Model ready · ${stats.rows || '?'} rows`;
+}
+
+function setLoading(btn, state) {
+  btn.classList.toggle('loading', state);
+  btn.disabled = state;
+}
+
+function showAlert(id, msg, type) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = `alert${msg ? ' show ' + type : ''}`;
+}
+
+function renderResults(d) {
+  allRows = d.rows; allCols = d.columns;
+  document.getElementById('st-total').textContent = d.total;
+  document.getElementById('st-anomaly').textContent = d.anomalies;
+  document.getElementById('st-normal').textContent = d.normal;
+  document.getElementById('st-rate').textContent = d.anomaly_rate + '%';
+  document.getElementById('leg-anom').textContent = d.anomalies;
+  document.getElementById('leg-norm').textContent = d.normal;
+  drawDonut(d.anomalies, d.normal);
+  renderTable(allRows);
+  document.getElementById('stats-section').classList.add('show');
+  document.getElementById('stats-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function drawDonut(anomalies, normal) {
+  const total = anomalies + normal;
+  const cx = 80, cy = 80, r = 62, stroke = 22;
+  const circumference = 2 * Math.PI * r;
+  const anomalyFrac = anomalies / total;
+  const normalFrac = normal / total;
+  const anom_dash = anomalyFrac * circumference;
+  const norm_dash = normalFrac * circumference;
+  const svg = document.getElementById('donut-svg');
+  svg.innerHTML = `
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#1e2235" stroke-width="${stroke}"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--anomaly)" stroke-width="${stroke}"
+      stroke-dasharray="${anom_dash} ${circumference}" stroke-dashoffset="0"
+      transform="rotate(-90 ${cx} ${cy})" stroke-linecap="round" style="transition:stroke-dasharray 0.8s"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--normal)" stroke-width="${stroke}"
+      stroke-dasharray="${norm_dash} ${circumference}" stroke-dashoffset="${-anom_dash}"
+      transform="rotate(-90 ${cx} ${cy})" stroke-linecap="round" style="transition:all 0.8s"/>
+    <text x="${cx}" y="${cy - 8}" text-anchor="middle" font-family="Syne,sans-serif" font-size="22" font-weight="800" fill="var(--text)">${(anomalyFrac*100).toFixed(1)}%</text>
+    <text x="${cx}" y="${cy + 12}" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="var(--muted)">anomaly</text>
+  `;
+}
+
+function filterTable(filter) {
+  currentFilter = filter;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  const filtered = filter === 'all' ? allRows : allRows.filter(r => r.anomaly_label === filter);
+  renderTable(filtered);
+}
+
+function renderTable(rows) {
+  const scores = rows.map(r => r.anomaly_score);
+  const minScore = Math.min(...scores), maxScore = Math.max(...scores);
+  const normalize = s => maxScore === minScore ? 0.5 : (s - minScore) / (maxScore - minScore);
+
+  // Build display columns: key columns + prediction cols
+  const keyCols = allCols.filter(c => !['anomaly_prediction','anomaly_label','anomaly_score'].includes(c)).slice(0, 6);
+  const displayCols = [...keyCols, 'anomaly_label', 'anomaly_score'];
+
+  const thead = document.getElementById('results-thead');
+  thead.innerHTML = '<tr>' + displayCols.map(c => `<th>${c}</th>`).join('') + '</tr>';
+
+  const tbody = document.getElementById('results-tbody');
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="${displayCols.length}" style="padding:24px;text-align:center;color:var(--muted)">No rows match this filter</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.slice(0, 300).map(row => {
+    return '<tr>' + displayCols.map(col => {
+      if (col === 'anomaly_label') {
+        const cls = row[col] === 'anomaly' ? 'anomaly' : 'normal';
+        const icon = cls === 'anomaly' ? '⚠' : '✓';
+        return `<td><span class="badge ${cls}">${icon} ${row[col]}</span></td>`;
+      }
+      if (col === 'anomaly_score') {
+        const norm = normalize(row[col]);
+        const color = row.anomaly_label === 'anomaly' ? 'var(--anomaly)' : 'var(--normal)';
+        return `<td><div class="score-bar">
+          <span style="color:var(--muted);min-width:44px">${row[col]}</span>
+          <div class="score-track"><div class="score-fill" style="width:${norm*100}%;background:${color}"></div></div>
+        </div></td>`;
+      }
+      return `<td style="color:var(--text)">${row[col] ?? '—'}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+}
+</script>
+</body>
+</html>
